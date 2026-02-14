@@ -11,7 +11,9 @@ from .constant import (
     HUMIDITY_KEY,
     TARGET_AUTO_HUMIDITY_KEY,
     RGB_LEVEL,
-    SCHEDULE_ENABLE     
+    SCHEDULE_ENABLE,
+    FOGLEVEL_KEY,
+    SPEED_RANGE,
 )
 
 from .helpers import Helpers
@@ -64,11 +66,17 @@ class PyDreoHumidifier(PyDreoBaseDevice):
         self._modes = device_definition.preset_modes
         if (self._modes is None):
             self._modes = self.parse_modes(details)
+        self._speed_range = None
+        if device_definition.device_ranges is not None and SPEED_RANGE in device_definition.device_ranges:
+            self._speed_range = device_definition.device_ranges[SPEED_RANGE]
+        if self._speed_range is None:
+            self._speed_range = self.parse_speed_range(details)
 
         self._mode = None
         self._mute_on = None
         self._humidity = None
         self._target_humidity = None
+        self._fan_speed = None
         self._wrong = None
         self._worktime = None
         self._rgblevel = None
@@ -94,6 +102,35 @@ class PyDreoHumidifier(PyDreoBaseDevice):
             modes = None
         _LOGGER.debug("parse_modes: Detected preset modes - %s", modes)
         return modes
+
+    def parse_speed_range(self, details: Dict[str, list]) -> tuple[int, int]:
+        """Parse the humidifier speed range from the details."""
+        controls_conf = details.get("controlsConf", None)
+        if controls_conf is not None:
+            schedule = controls_conf.get("schedule", None)
+            if schedule is not None:
+                modes_node = schedule.get("modes", None)
+                if modes_node is not None:
+                    for mode_item in modes_node:
+                        controls = mode_item.get("controls", None)
+                        speed_range = self.parse_speed_range_from_control_node(controls)
+                        if speed_range is not None:
+                            _LOGGER.debug("parse_speed_range: Detected speed range %s", speed_range)
+                            return speed_range
+        return None
+
+    def parse_speed_range_from_control_node(self, control_node) -> tuple[int, int]:
+        """Parse speed range from a control node."""
+        if control_node is None:
+            return None
+        for control_item in control_node:
+            cmd_values = control_item.get("cmd", None)
+            if isinstance(cmd_values, list) and FOGLEVEL_KEY in cmd_values:
+                speed_low = control_item.get("startValue", None)
+                speed_high = control_item.get("endValue", None)
+                if isinstance(speed_low, int) and isinstance(speed_high, int):
+                    return (speed_low, speed_high)
+        return None
         
     @property
     def is_on(self):
@@ -133,6 +170,38 @@ class PyDreoHumidifier(PyDreoBaseDevice):
             return
         self._target_humidity = value
         self._send_command(TARGET_AUTO_HUMIDITY_KEY, value)
+
+    @property
+    def speed_range(self):
+        """Get the fan speed range."""
+        return self._speed_range
+
+    @property
+    def fan_speed_range(self):
+        """Get the fan speed range for Number entity dynamic bounds."""
+        return self._speed_range
+
+    @property
+    def fan_speed(self):
+        """Return the current fan speed."""
+        return self._fan_speed
+
+    @fan_speed.setter
+    def fan_speed(self, fan_speed: int):
+        """Set the fan speed."""
+        # HA NumberEntity sends floats; Dreo expects integer foglevel values.
+        fan_speed = int(fan_speed)
+        if self._speed_range is None:
+            raise NotImplementedError("Attempting to set fan speed on a device that doesn't support it.")
+        if fan_speed < self._speed_range[0] or fan_speed > self._speed_range[1]:
+            _LOGGER.error("fan_speed: Fan speed %s is not in the acceptable range: %s",
+                          fan_speed,
+                          self._speed_range)
+            raise ValueError(f"fan_speed must be between {self._speed_range[0]} and {self._speed_range[1]}")
+        if self._fan_speed == fan_speed:
+            _LOGGER.debug("fan_speed: fan_speed - value already %s, skipping command", fan_speed)
+            return
+        self._send_command(FOGLEVEL_KEY, fan_speed)
 
     @property
     def panel_sound(self) -> bool:
@@ -212,6 +281,7 @@ class PyDreoHumidifier(PyDreoBaseDevice):
         self._mute_on = self.get_state_update_value(state, MUTEON_KEY)
         self._humidity = self.get_state_update_value(state, HUMIDITY_KEY)
         self._target_humidity = self.get_state_update_value(state, TARGET_AUTO_HUMIDITY_KEY)
+        self._fan_speed = self.get_state_update_value(state, FOGLEVEL_KEY)
         self._wrong = self.get_state_update_value_mapped(state, WATER_LEVEL_STATUS_KEY, WATER_LEVEL_STATUS_MAP)
         self._worktime = self.get_state_update_value(state, WORKTIME_KEY)
         self._rgblevel = self.get_state_update_value_mapped(state, RGB_LEVEL, RGB_MAP)
@@ -261,3 +331,8 @@ class PyDreoHumidifier(PyDreoBaseDevice):
         if isinstance(val_target_humidity, int):
             self._target_humidity = val_target_humidity
             _LOGGER.debug("handle_server_update: handle_server_update - target_humidity is %s", self._target_humidity)
+
+        val_foglevel = self.get_server_update_key_value(message, FOGLEVEL_KEY)
+        if isinstance(val_foglevel, int):
+            self._fan_speed = val_foglevel
+            _LOGGER.debug("handle_server_update: handle_server_update - fan_speed is %s", self._fan_speed)

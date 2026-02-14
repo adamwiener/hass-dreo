@@ -23,7 +23,7 @@ class DreoFanHA(DreoBaseDeviceHA, FanEntity):
         self.device = pyDreoFan
         if self.device.type is DreoDeviceType.CEILING_FAN:
             self._attr_icon = "mdi:ceiling-fan"
-        elif self.device.type is DreoDeviceType.DEHUMIDIFIER:
+        elif self.device.type in (DreoDeviceType.HUMIDIFIER, DreoDeviceType.DEHUMIDIFIER):
             self._attr_name = f"{super().name} Fan Speed"
 
     @property
@@ -37,6 +37,8 @@ class DreoFanHA(DreoBaseDeviceHA, FanEntity):
             elif self.device.preset_mode == "High":
                 return 100
             return None
+        if getattr(self.device, "speed_range", None) is None:
+            return None
         return ranged_value_to_percentage(
             self.device.speed_range, self.device.fan_speed
         )
@@ -49,29 +51,31 @@ class DreoFanHA(DreoBaseDeviceHA, FanEntity):
     @property
     def oscillating(self) -> bool:
         """This represents horizontal oscillation only"""
-        if self.device.type is DreoDeviceType.DEHUMIDIFIER:
+        if self.device.type in (DreoDeviceType.HUMIDIFIER, DreoDeviceType.DEHUMIDIFIER):
             return False
-        return self.device.oscillating
+        return getattr(self.device, "oscillating", None)
 
     @property
     def speed_count(self) -> int:
         """Return the number of speeds the fan supports."""
+        if getattr(self.device, "speed_range", None) is None:
+            return 0
         return int_states_in_range(self.device.speed_range)
 
     @property
     def preset_modes(self) -> list[str]:
         """Get the list of available preset modes."""
-        return self.device.preset_modes
+        return getattr(self.device, "preset_modes", None)
 
     @property
     def preset_mode(self) -> str | None:
         """Get the current preset mode."""
-        return self.device.preset_mode
+        return getattr(self.device, "preset_mode", None)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return the state attributes of the fan."""
-        attr = {"temperature": self.device.temperature,
+        attr = {"temperature": getattr(self.device, "temperature", None),
             'model': self.device.model,
             'sn': self.device.serial_number}
         return attr
@@ -80,9 +84,10 @@ class DreoFanHA(DreoBaseDeviceHA, FanEntity):
     def supported_features(self) -> int:
         """Return the list of supported features."""
         supported_features = FanEntityFeature.SET_SPEED | FanEntityFeature.TURN_ON | FanEntityFeature.TURN_OFF
-        if (self.device.preset_modes is not None):
+        if (getattr(self.device, "preset_modes", None) is not None):
             supported_features = supported_features | FanEntityFeature.PRESET_MODE
-        if (self.device.oscillating is not None and self.device.type is not DreoDeviceType.DEHUMIDIFIER):
+        if (getattr(self.device, "oscillating", None) is not None and
+            self.device.type not in (DreoDeviceType.HUMIDIFIER, DreoDeviceType.DEHUMIDIFIER)):
             supported_features = supported_features | FanEntityFeature.OSCILLATE
 
         return supported_features
@@ -137,7 +142,7 @@ class DreoFanHA(DreoBaseDeviceHA, FanEntity):
         if self.device.type is DreoDeviceType.DEHUMIDIFIER:
             self.device.set_preset_mode(preset_mode)
         else:
-            self.device.preset_mode = preset_mode
+            setattr(self.device, "preset_mode", preset_mode)
 
         self.schedule_update_ha_state()
 

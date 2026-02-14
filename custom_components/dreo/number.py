@@ -125,6 +125,15 @@ NUMBERS: tuple[DreoNumberEntityDescription, ...] = (
         min_value=40,
         max_value=90,
         exists_fn=lambda device: device.type != DreoDeviceType.HUMIDIFIER and device.is_feature_supported("target_humidity"),
+    ),
+    DreoNumberEntityDescription(
+        key="Fan Speed",
+        translation_key="fan_speed",
+        attr_name="fan_speed",
+        icon="mdi:fan",
+        min_value=1,
+        max_value=10,
+        exists_fn=lambda device: device.type == DreoDeviceType.HUMIDIFIER and device.is_feature_supported("speed_range"),
     )
 )
 
